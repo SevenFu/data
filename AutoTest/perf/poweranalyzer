@@ -1,0 +1,173 @@
+#! /usr/bin/python
+#
+#   Author: Matthew S. Atwood <matthew.s.atwood@intel.com>
+"""
+NAME
+    poweranalyzer - generate csv files from recording input from an Extech
+    Instruments Power Analyzer 380803.
+
+SYNOPSIS
+    poweranalyzer -h | --help
+        Print this help message.
+
+    poweranalyzer [-f filename] [-p port] [-r rate]
+        Record the power consumption in csv format into filename
+
+Description
+    Records the power consumption in watts from the device. Using a naive
+    timing method. The file stored in csv format with the first element of
+    each row is the time (seconds) since invocation of the record. The second
+    element of each row is the current watt consumption to the nearest tenth of
+    a watt. Data is recorded until a keyboard interrupt is issued.
+
+    -f filename
+        Where to store the data, recording from the Extech device.
+
+    -p port
+        Where the serial device is assigned by the kernel. Default value is
+        '/dev/ttyUSB0'.
+
+    -r rate
+        How often data should be polled from the device in seconds. Minimum
+        value is .1 seconds.
+
+TIPS
+    If attempting to automate this, and need a way to kill the script without
+    wiping out the file $kill -SIGINT pid
+
+Author
+    Matthew S. Atwood <matthew.s.atwood@intel.com>
+
+FIXED
+    1) add 0.5 second delay to make it work
+    2) add KeyboardInterrupt, SystemExit handler
+          a) clean up serial port for next run
+          b) save output file for current run
+"""
+
+import getopt
+import os
+import serial
+import sys
+from time import sleep
+
+automation=1
+
+class ExtechDevice:
+    def __init__(self, port, pollRate=2):
+        self.serial = serial.Serial(port,
+                                    baudrate=9600,
+                                    dsrdtr=True,
+                                    timeout=0)
+        self.serial.setDTR(level=1)
+        self.serial.setRTS(level=0)
+
+        self.pollRate = pollRate
+
+        #magic BCD encoding trick tables
+        self.revNum = [0x0, 0x8, 0x4, 0xc,
+                        0x2, 0xa, 0x6, 0xe,
+                        0x1, 0x9, 0x5, 0xd,
+                        0x3, 0xb, 0x7, 0xf]
+
+        self.digitMap = [0x2, 0x3c, 0x3c0, 0x3c00]
+        self.digitShift = [1, 2, 6, 10]
+        #must wait a little or it will not work
+        sleep(0.5)
+        #eat the garbage first packet on creation
+        self.getPacket()
+
+
+    def getPacket(self):
+        self.serial.write(' ')
+        return(bytearray(self.serial.read(20)))
+
+    #magic: extech device watt information is stored in bytes 2 and 3
+    #preserver the header from decode value from powertop
+    def parsePacket(self, byte2, byte3):
+        value = []
+
+        bytesValue = (byte3 << 8) + byte2
+
+        sign = bytesValue & 0x1
+        if sign != 1:
+            value.append('-')
+
+        value.append('0')
+        if ((bytesValue & self.digitMap[0]) >> self.digitShift[0]):
+            value[-1] += 1
+
+        for i in range(1, 4):
+            dig = ((bytesValue & self.digitMap[i]) >> self.digitShift[i])
+            dig = self.revNum[dig]
+            value.append(str(0 + dig))
+
+        #extech only has a tenth of a watt granularity.
+        #we can assume where the decimal is
+        value.insert(len(value) - 1, '.')
+        return ''.join(value)
+
+    def record(self, fileName):
+        if automation==1:
+            fp = sys.stdout
+        else:
+            try:
+                fp = open(fileName, 'wb')
+            except IOError:
+                raise IOError('Cannot open file for write')
+
+        time = 0
+
+        while True:
+            try:
+                p = self.getPacket()
+                value = self.parsePacket(p[2], p[3])
+                fp.write('{0}, {1},\n'.format(time, value))
+                time += self.pollRate
+                sleep(self.pollRate)
+            except (KeyboardInterrupt,SystemExit):
+                self.serial.flush()
+                self.serial.close()
+                fp.close()
+                return
+
+
+if __name__ == '__main__':
+    try:
+        optList, garbage = getopt.getopt(sys.argv[1:], 'hf:p:r:',
+                                        ['help', 'file=', 'port=', 'rate='])
+    except getopt.GetoptError as err:
+        sys.stderr.write('ERROR: {0}\n'.format(err))
+        sys.stderr.write('    For help run: {0} --help\n'.format(sys.argv[0]))
+        sys.exit(2)
+
+    #no trailing strictly enforced
+    if len(garbage) != 0:
+        sys.stderr.write('ERROR: Trailing arguments\n')
+        sys.stderr.write('    For help run: {0} --help\n'.format(sys.argv[0]))
+
+    fileName = ''
+    port = '/dev/ttyUSB0'
+    rate = 2
+
+    for opt, arg in optList:
+        if opt in ('-h', '--help'):
+            print __doc__
+            sys.exit(0)
+        elif opt in ('-f', '--file'):
+            fileName = arg
+        elif opt in ('-p', '--port'):
+            port = arg
+        elif opt in ('-r', '--rate'):
+            rate = arg
+
+    #device granularity appears to only be reliable at the .1 second mark
+    if rate < .1:
+        sys.stderr.write('ERROR: rate to small, minimum value is .1 seconds\n')
+        sys.stderr.write('    For help run: {0} --help\n'.format(sys.argv[0]))
+        sys.exit(2)
+
+    d = ExtechDevice(port, pollRate=float(rate))
+
+    sleep(.1)
+    d.record(fileName)

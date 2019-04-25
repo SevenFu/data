@@ -1,0 +1,219 @@
+#! /usr/bin/env python
+"""
+NAME
+    installer - copies scripts and benchmarks to the test path
+
+SYNOPSYS
+    sudo ./installer
+
+DESCRIPTION
+    Copies benchmarks and scripts to the path where the test should be
+    run from. Large assets such as test videos are also fetched.
+
+COPYRIGHT
+    2014 Intel Corporation. All Rights Reserved.
+"""
+
+import os
+import shutil
+import urllib
+import hashlib
+import sys
+from distutils.dir_util import copy_tree
+import argparse
+
+class CacheAssets():
+    legacy_server = "stocsocros.jf.intel.com"
+    default_server = "http://otc-chromeos-media.jf.intel.com"
+
+    def __init__(self, telemetryDir, httpaddr):
+        if not httpaddr:
+            httpaddr = self.default_server
+        elif not httpaddr.startswith("http://"):
+            # If http:// wasn't given, add it
+            httpaddr = "http://" + httpaddr
+
+        if self.legacy_server in httpaddr:
+            # Legacy server is a special case, can't be accessed by port number
+            source = "http://stocsocros.jf.intel.com/yahvp/video/tos/"
+        else:
+            source = httpaddr + ":7000/video/tos/"
+
+        self.assets = [
+            {
+                'filename': 'ToS_1080p_59.94fps_H264_6000kbps.mp4',
+                'sha1sum': '6a733eb94a3aa7405be3100d013c089fb1ba1c12',
+                'source': source,
+                'destination': os.path.join(telemetryDir,
+                                            'page_sets',
+                                            'local_video_intel'),
+            },
+            {
+                'filename': 'ToS_1080p_29.97fps_H264_6000kbps.mp4',
+                'sha1sum': '90c32fecd7b90617a9f5404ac3f723db14db171d',
+                'source': source,
+                'destination': os.path.join(telemetryDir,
+                                            'page_sets',
+                                            'local_video_intel'),
+            }
+        ]
+
+    def _setup(self, asset):
+        """ Create the destionation directory if necessary """
+        if not os.path.exists(asset['destination']):
+          os.makedirs(asset['destination'])
+
+    def _fetch(self, asset):
+        """ Download the asset """
+        url = asset['source'] + asset['filename']
+        dest = os.path.join(asset['destination'], asset['filename'])
+        print ('\tFetching ' + url)
+        try:
+            urllib.urlretrieve(url, dest)
+        except KeyboardInterrupt:
+            sys.exit()
+        except:
+            print("\tCannot retrieve " + url)
+            print("\tPossibly bad URL")
+
+    def _verify(self, asset):
+        """ Verify the retrieved file """
+        assetPath = os.path.join(asset['destination'], asset['filename'])
+
+        try:
+            with open(assetPath, 'r') as assetFile:
+              # Calculate the sha1sum of the local file and verify
+              assetSum = hashlib.sha1(assetFile.read()).hexdigest()
+              if assetSum == asset['sha1sum']:
+                  return True
+        except EnvironmentError:
+            return False
+
+        # The sha1sums did not match
+        return False
+
+    def start(self):
+        for asset in self.assets:
+            self._setup(asset)
+
+            for x in range(2):  # Only try downloading the file a few times
+                if self._verify(asset):  # Done, SHA1 sums match
+                    break
+                self._fetch(asset)
+
+            # Print success or fail
+            if self._verify(asset):
+                print ('\tSuccessfully fetched ' + asset['filename'])
+            else:
+                print ('\tFailed to fetch ' + asset['filename'])
+                print ('\tRerun installer')
+
+
+if __name__ == '__main__':
+    aparser = argparse.ArgumentParser(prog='installer')
+    aparser.add_argument('--cros_src', nargs=1, required=True,
+                         help='Path to the top of the Chrome OS tree',
+                         metavar="<cros_src>")
+    aparser.add_argument('--chrome_root', nargs=1,
+                         help='Path to Chromium browser sources',
+                         metavar="<chrome_root>")
+    aparser.add_argument('--server', dest="httpaddr", default="",
+                         help="URL of web server for benchmarks. " \
+                         "Used to fetch local videos.",
+                         metavar="<httpaddr>")
+    args = aparser.parse_args()
+
+    if args.cros_src:
+        autotestDir = os.path.join(args.cros_src[0], 'src', 'third_party',
+                                   'autotest', 'files', 'client', 'site_tests')
+        telemetryDir = os.path.join(args.cros_src[0],'chrome_root','src',
+                                   'tools','perf')
+    if args.chrome_root:
+        telemetryDir = os.path.join(args.chrome_root[0],'src','tools','perf')
+
+
+    if not os.path.exists(os.path.join(telemetryDir)):
+        print 'ERROR: Cannot install, chrome_root perf tests at' + \
+              ' {path} not found.'.format(path=os.path.join(telemetryDir))
+        aparser.print_help()
+        exit(-2)
+    if not os.path.exists(os.path.join(autotestDir)):
+        print 'ERROR: Cannot install, autotest suites at' + \
+              ' {path} not found.'.format(path=os.path.join(autotestDir))
+        aparser.print_help()
+        exit(-2)
+
+    st = telemetryDir.find('chrome_root')
+    sa = autotestDir.find('src')
+    td = telemetryDir[0:st]
+    ad = autotestDir[0:sa]
+    if td != ad:
+       print "WARNING: chrome_root and autotest suites in different base paths."
+       print "WARNING: chrome_root is in directory  {path}".format(path=td)
+       print "WARNING: autotest suites in directory {path}".format(path=ad)
+
+#make sure we're in a chroot we recognize
+    if os.path.exists(os.path.join(telemetryDir)):
+        print '#####copying applications#####'
+        for fileObj in os.listdir('.'):
+            if not os.path.isdir(os.path.join('.', fileObj)):
+                shutil.copyfile(os.path.join('.', fileObj),
+                                             os.path.join(telemetryDir,
+                                             fileObj))
+
+    if os.path.exists(os.path.join(telemetryDir, 'benchmarks')):
+        print '#####copying benchmarks#####'
+        for fileObj in os.listdir(os.path.join('.', 'benchmarks')):
+            if not os.path.isdir(os.path.join('.', 'benchmarks', fileObj)):
+                shutil.copyfile(os.path.join('.', 'benchmarks', fileObj),
+                                os.path.join(telemetryDir, 'benchmarks',
+                                fileObj))
+            else:
+                copy_tree(os.path.join('.', 'benchmarks', fileObj),
+                          os.path.join(autotestDir, fileObj))
+
+    if os.path.exists(os.path.join(telemetryDir, 'measurements')):
+        print '#####copying measurements#####'
+        for fileName in os.listdir(os.path.join('.', 'measurements')):
+            if not os.path.isdir(os.path.join('.', 'measurements', fileName)):
+                shutil.copyfile(os.path.join('.', 'measurements', fileName),
+                                os.path.join(telemetryDir, 'measurements',
+                                fileName))
+
+    if os.path.exists(os.path.join(telemetryDir, 'page_sets')):
+        print '#####copying page_sets#####'
+        for fileName in os.listdir(os.path.join('.', 'page_sets')):
+            if not os.path.isdir(os.path.join('.', 'page_sets', fileName)):
+                shutil.copyfile(os.path.join('.', 'page_sets', fileName),
+                                os.path.join(telemetryDir, 'page_sets',
+                                fileName))
+
+    if not os.path.exists(os.path.join(telemetryDir, 'page_sets/webrtc_intel_cases')):
+        os.makedirs(os.path.join(telemetryDir, 'page_sets/webrtc_intel_cases'))
+        print '#####copying page_sets/webrtc_intel_cases#####'
+        for fileName in os.listdir(os.path.join('.', 'page_sets/webrtc_intel_cases')):
+            if not os.path.isdir(os.path.join('.', 'page_sets/webrtc_intel_cases', fileName)):
+                shutil.copyfile(os.path.join('.', 'page_sets/webrtc_intel_cases', fileName),
+                                os.path.join(telemetryDir, 'page_sets/webrtc_intel_cases',
+                                fileName))
+
+    print '#####Setting Permissions#####'
+    scripts =  ['perfcsv',
+                'perfplot',
+                'intel_run_benchmark',
+                'poweranalyzer',
+                'pnp.py',
+                'sendTo.py',
+                'perfstats.py',
+                'parse_results.py',
+                'display',
+                'autotest_runner.py',
+                '__init__.py',
+                'ip_finder.py']
+
+    for script in scripts:
+        os.chmod(os.path.join(telemetryDir, script), 0770)
+
+    print '#####Caching Assets#####'
+    cacheAssets = CacheAssets(telemetryDir, args.httpaddr)
+    cacheAssets.start()

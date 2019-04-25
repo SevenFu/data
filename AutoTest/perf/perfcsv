@@ -1,0 +1,86 @@
+#! /usr/bin/env python
+#
+#   AUTHOR: Matthew S. Atwood <matthew.s.atwood@intel.com>
+"""
+NAME
+    perfcsv - Converts performance profiling data stored in pickle files
+    created by perfrun in CSV formatted tables.
+
+SYNOPSIS
+    perfcsv -h | --help
+        Print this help message.
+
+    perfcsv [-o outdir] pickle0 [pickle1] [pickle2] ...
+        Create CSV formatted tables from the performance profiling data
+        stored in the pickle files.
+
+DESCRIPTION
+    Prints to standard out the performance profiling data stored in the pickles
+    sequentially starting with the first pickle listed.
+
+    -o outdir
+        Without the -o flag the output is displayed in standard out. With this
+        flag saves the CSV formatted tables in the directory specified.
+
+AUTHOR
+    Matthew S Atwood
+"""
+
+import os
+import sys
+import getopt
+import cPickle
+import csv
+import perfstats as ps
+
+if __name__ == '__main__':
+    try:
+        optList, pickleList = getopt.getopt(sys.argv[1:], 'ho:',
+                                            ['help', 'output='])
+    except getopt.GetoptError as err:
+        sys.stderr.write('ERROR: {0}\n'.format(err))
+        sys.stderr.write('  For help run: {0} --help\n'. format(sys.argv[0]))
+        sys.exit(2)
+
+    outDir = ''
+    for opt, arg in optList:
+        if opt in ('-h', '--help'):
+            print(__doc__)
+            sys.exit(0)
+        elif opt in ('-o', '--output'):
+            outDir = arg
+            if not os.path.isdir(outDir):
+                sys.stderr.write('Output directory "{0}" does not exist\n'.format(outdir))
+                sys.stderr.write('  For help run {0} --help\n'.format(sys.argv[0]))
+                sys.exit(2)
+        else:
+            sys.stderr.write('ERROR: Unhandled option {0}\n'.format(opt))
+            sys.stderr.write('  For help run {0} --help\n'.format(sys.argv[0]))
+            sys.exit(2)
+
+    if not pickleList:
+        sys.stderr.write('ERROR: No files given\n')
+        sys.stderr.write('  For help run {0} --help\n'.format(sys.argv[0]))
+
+    collection = []
+    for fileName in pickleList:
+        with open(fileName, 'r') as f:
+            collection.append(cPickle.load(f))
+    csvrows = []
+    for entry in collection:
+        header = [[entry.label]]
+        contents = entry.result.generateCSVRows() + entry.profiles['extech'].generateCSVRows() + [[''],['']] + entry.profiles['vmstat'].generateCSVRows()
+        csvrows = csvrows + header + contents
+    if outDir != '':
+        label = 'perfcsv'
+        for pickle in pickleList:
+            label = '{0}-{1}'.format(label, pickle[:-4])
+        with open(outDir + '/{0}'.format(label), 'wb') as f:
+            writer = csv.writer(f)
+            writer.writerows(csvrows)
+    else:
+        for row in csvrows:
+            for element in row:
+                sys.stdout.write('{0}, '.format(element))
+            sys.stdout.write('\n')
+

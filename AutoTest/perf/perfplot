@@ -1,0 +1,101 @@
+#!/usr/bin/env python
+#
+#   Author: Matthew S. Atwood <matthew.s.atwood@intel.com>
+"""
+NAME
+    perfplot - plot the performance profiling for a perfrun .pkl file.
+
+SYNOPSIS
+    perfplot -h | --help
+        Print this help message.
+
+    perfplot [-o outdir] pickle0 [pickle1] [pickle2] ...
+        Plot the performance profiling data for .pa or .vms file(s).
+
+DESCRIPTION
+    Plots the performance profiling data stored within pickle files and can
+    compare the performance profiling data stored in multiple pickle files.
+    By default these are plotted to the screen in an interactive matplotlib
+    window. If the data stored is of the same type they will be overplotted.
+
+    -o outdir
+        Creates .png files of each plot in the directory specified.  When -o
+        flag is given no matplotlib plot windows are opened.
+
+AUTHOR
+    Matthew S. Atwood
+
+COPYRIGHT
+    2013 Intel Corporation All Rights Reserved.
+"""
+
+import os
+import sys
+import getopt
+import cPickle
+import matplotlib.pyplot as pyplot
+import perfstats as ps
+
+if __name__ == '__main__':
+    try:
+        optList, pickleList = getopt.getopt(sys.argv[1:], 'ho:',
+                                        ['help', 'output='])
+    except getopt.GetoptError as err:
+        sys.stderr.write('ERROR: {0}\n'.format(err))
+        sys.stderr.write('  For help run: {0} --help\n'.format(sys.argv[0]))
+        sys.exit(2)
+
+    outDir = ''
+    for opt, arg in optList:
+        if opt in ('-h', '--help'):
+            print(__doc__)
+            sys.exit(0)
+        elif opt in ('-o', '--output'):
+            outDir = arg
+            if not os.path.isdir(outDir):
+                sys.stderr.write('Output directory "{0}" does not exist\n'.format(outDir))
+                sys.stderr.write('  For help run {0} --help\n'.format(sys.argv[0]))
+                sys.exit(2)
+
+        else:
+            sys.stderr.write('ERROR: Unhandled option {0}\n'.format(opt))
+            sys.stderr.write('  For help run {0} --help\n'.format(sys.argv[0]))
+            sys.exit(2)
+
+    if not pickleList:
+            sys.stderr.write('ERROR: No files given\n')
+            sys.stderr.write('  For help run {0} --help\n'.format(sys.argv[0]))
+            sys.exit(2)
+
+    collection = []
+    for fileName in pickleList:
+        collection.append(cPickle.load(open(fileName, 'r')))
+
+    numGraphs = 0
+    extechFlag = False
+    vmstatFlag = 0
+    if len(collection[0].profiles['extech'].watts.getCollection()) != 0:
+        numGraphs += 1
+        extechFlag = True
+
+    if len(collection[0].profiles['vmstat'].mem.getCollection()) != 0:
+        numGraphs +=3
+        vmstatFlag = True
+
+    pyplot.figure(1)
+    for entry in collection:
+        start = 1
+        if extechFlag:
+            entry.profiles['extech'].plot(total=numGraphs, row=start)
+            start += 1
+        if vmstatFlag:
+            entry.profiles['vmstat'].plot(total=numGraphs, row=start)
+            start +=3
+
+    if outDir != '':
+        label = 'perfplot'
+        for pickle in pickleList:
+            label = '{0}-{1}'.format(label, pickle[:-4])
+        pyplot.savefig(outDir + '/{0}'.format(label))
+    else:
+        pyplot.show()

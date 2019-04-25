@@ -1,0 +1,23 @@
+(dp0
+S'ip'
+p1
+S'0.0.0.0'
+p2
+sS'from'
+p3
+S'm@m.com'
+p4
+sS'ts'
+p5
+S'standard'
+p6
+sS'to'
+p7
+(lp8
+S'm@m.com'
+p9
+asS'subject'
+p10
+S'Power and Performance Test Results Chrome Version: 69.0.3497.14 Firmware: Google_Reef.9042.43.0 Build: 10895.5.0 Board: reef'
+p11
+s.
